@@ -35,7 +35,7 @@ def initialize_team_stats(team_name, schedule):
             if score > 0:
                 dev_sum += math.pow((score - average), 2)
         std_dev = round(math.sqrt(dev_sum / count), 2)
-        return average, std_dev, wins
+        return average, std_dev, wins, count - wins
 
 
 class league:
@@ -49,8 +49,14 @@ class league:
         self.schedule = download.league_schedule_data(league_id, season)
         for div, teams in self.divisions.items():
             for team_name in teams:
-                average, std_dev, wins = initialize_team_stats(team_name, self.schedule)
-                self.teams.append(team(team_name, div, average, std_dev, wins))
+                average, std_dev, wins, losses = initialize_team_stats(team_name, self.schedule)
+                self.teams.append(team(team_name, div, average, std_dev, wins, losses))
+
+    def get_team_by_name(self, name):
+        for tm in self.teams:
+            if tm.name == name:
+                return tm
+        return None
 
 
 class simulated_league:
@@ -177,28 +183,32 @@ class team:
     average = 0.0
     std_dev = 0.0
     wins = 0
+    losses = 0
+    average_allowed = 0.0
 
-    def __init__(self, name, division, average, std_dev, wins):
+    def __init__(self, name, division, average, std_dev, wins, losses):
         self.name = name
         self.division = division
         self.average = average
         self.std_dev = std_dev
         self.wins = wins
+        self.losses = losses
 
     def __str__(self):
-        team_str = "Name: " + str(self.name) + "\nAverage: " + str(self.average) + "\nStd Dev: " + str(self.std_dev) + "\nWins: " + str(self.wins)
-        return str(team_str)
+        team_str = str(self.name) + "(" + str(self.wins) + "-" + str(self.losses) + ") " + str(self.average) + " PF/G"
+        record = str("(" + str(self.wins) + "-" + str(self.losses) + ")")
+        return str("%-32s %-7s %5.1f PF/G" % (self.name, record, self.average))
 
 lg = league()
 results_dict = {}
 for tm in lg.teams:
     results_dict[tm.name] = [0 for i in range(len(lg.teams))]
-sims = 10000
+sims = 1
 for i in range(sims):
     curr_teams = copy.deepcopy(lg.teams)
     curr_schedule = copy.deepcopy(lg.schedule)
     sim_lg = simulated_league(lg.divisions, curr_schedule, curr_teams)
-    sim_lg.simulate()
+    # sim_lg.simulate()
     standings = sim_lg.get_standings()
     adjusted_standings = []
     team_average = None
@@ -216,6 +226,7 @@ for i in range(sims):
     # print()
 csv_file = open("results.csv", "w")
 for tm, results in results_dict.items():
+    print(lg.get_team_by_name(tm))
     csv_file.write(tm + ",")
     for num in results:
         csv_file.write(str(num / sims) + ",")
