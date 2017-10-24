@@ -45,8 +45,8 @@ class league:
     teams = []
 
     def __init__(self, league_id=565232, season=2016):
-        self.divisions = download.league_division_data(league_id, season)
-        self.schedule = download.league_schedule_data(league_id, season)
+        self.divisions = download.get_league_settings(league_id, season)
+        self.schedule = download.get_league_schedule(league_id, season)
         for div, teams in self.divisions.items():
             for team_name in teams:
                 average, std_dev, wins, losses = initialize_team_stats(team_name, self.schedule)
