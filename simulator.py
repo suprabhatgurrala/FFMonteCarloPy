@@ -1,234 +1,98 @@
-import copy
-import math
-import random
-
-import download
+import statistics
+import espnff
 
 
-def initialize_team_stats(team_name, schedule):
-    scores = []
-    sum = 0.0
-    count = 0
-    wins = 0
-    if len(team_name) > 0:
-        for week, matchups in schedule.items():
-            for matchup in matchups:
-                if matchup.get("home") == team_name:
-                    score = matchup.get("homeScore")
-                    sum += score
-                    scores.append(score)
-                    if score > 0:
-                        count += 1
-                    if matchup.get("homeScore") > matchup.get("awayScore"):
-                        wins += 1
-                if matchup.get("away") == team_name:
-                    score = matchup.get("awayScore")
-                    sum += score
-                    scores.append(score)
-                    if score > 0:
-                        count += 1
-                    if matchup.get("awayScore") > matchup.get("homeScore"):
-                        wins += 1
-        average = round(sum / count, 2)
-        dev_sum = 0
-        for score in scores:
-            if score > 0:
-                dev_sum += math.pow((score - average), 2)
-        std_dev = round(math.sqrt(dev_sum / count), 2)
-        return average, std_dev, wins, count - wins
-
-
-class league:
-    "Object representing current state of a fantasy football league."
-    divisions = {}
-    schedule = {}
-    teams = []
-
-    def __init__(self, league_id=565232, season=2016):
-        self.divisions = download.get_league_settings(league_id, season)
-        self.schedule = download.get_league_schedule(league_id, season)
-        for div, teams in self.divisions.items():
-            for team_name in teams:
-                average, std_dev, wins, losses = initialize_team_stats(team_name, self.schedule)
-                self.teams.append(team(team_name, div, average, std_dev, wins, losses))
-
-    def get_team_by_name(self, name):
-        for tm in self.teams:
-            if tm.name == name:
-                return tm
-        return None
-
-
-class simulated_league:
-    divisions = {}
-    schedule = {}
-    teams = []
-    seed = 0
-
-    def __init__(self, divisions, schedule, teams):
-        self.divisions = divisions
-        self.schedule = schedule
-        self.teams = teams
-
-    def get_team_by_name(self, team_name):
-        for team in self.teams:
-            if team_name == team.name:
-                return team
-        return None
-
-    def simulate(self):
-        for week, matchups in self.schedule.items():
-            for matchup in matchups:
-                if matchup.get("homeScore") == 0.0 and matchup.get("awayScore") == 0.0:
-                    home = self.get_team_by_name(matchup.get("home"))
-                    away = self.get_team_by_name(matchup.get("away"))
-                    homeScore = round(random.gauss(home.average, home.std_dev), 1)
-                    # print("Generated: ", homeScore)
-                    awayScore = round(random.gauss(away.average, away.std_dev), 1)
-                    matchup['homeScore'] = homeScore
-                    matchup['awayScore'] = awayScore
-                    if homeScore > awayScore:
-                        home.wins += 1
-                    else:
-                        away.wins += 1
-
-    def tiebreak(self, tied_teams):
-        h2h_dict = {}
-        tied_tm_names = []
-        for tm in tied_teams:
-            tied_tm_names.append(tm.name)
-            h2h_dict[tm.name] = (0, 0)
-        # print("Breaking ties between: ", tied_tm_names)
-        for week, matchups in self.schedule.items():
-            for matchup in matchups:
-                home = matchup.get("home")
-                away = matchup.get("away")
-                if home in tied_tm_names and away in tied_tm_names:
-                    # update h2h_dict for home
-                    homeScore = matchup.get("homeScore")
-                    awayScore = matchup.get("awayScore")
-                    if homeScore > 0.0 and awayScore > 0.0:
-                        if homeScore > awayScore:
-                            h_wins, h_games = h2h_dict.get(home)
-                            h2h_dict[home] = h_wins + 1, h_games + 1
-                            a_wins, a_games = h2h_dict.get(away)
-                            h2h_dict[away] = a_wins + 0, a_games + 1
-                        else:
-                            h_wins, h_games = h2h_dict.get(home)
-                            h2h_dict[home] = h_wins + 0, h_games + 1
-                            a_wins, a_games = h2h_dict.get(away)
-                            h2h_dict[away] = a_wins + 1, a_games + 1
-        tiebreak_heuristic_dict = {}
-        num_games_set = set()
-        for tm_name, (wins, games) in h2h_dict.items():
-            tiebreak_heuristic_dict[tm_name] = wins + games
-            num_games_set.add(games)
-        team_heuristic_dict = {}
-        for tm in tied_teams:
-            team_heuristic_dict[tm] = tiebreak_heuristic_dict[tm.name]
-
-        sorted_pf = sorted(tied_teams, key=lambda team: team.average, reverse=True)
-        sorted_h2h = sorted(sorted_pf, key=lambda team: team_heuristic_dict.get(team), reverse=True)
-        if (len(num_games_set) == 1 and num_games_set.pop() is not 0):
-            # print("H2H was used to break the tie.")
-            return sorted_h2h[0]
-        else:
-            # print("PF was used to break the tie.")
-            return sorted_pf[0]
-
-
-    def get_standings(self):
-        wins_dict = {}
-        standings = []
-        for team in self.teams:
-            wins_dict.setdefault(team.wins, []).append(team)
-        win_list = sorted(wins_dict.keys(), reverse=True)
-        for num in win_list:
-            tied_teams = wins_dict.get(num)
-            if len(tied_teams) == 1:
-                standings.append(tied_teams[0])
-            else:
-                while (len(tied_teams) > 1):
-                    tie_winner = self.tiebreak(tied_teams)
-                    # print ("Tie winner: ", tie_winner.name)
-                    standings.append(tie_winner)
-                    tied_teams.remove(tie_winner)
-                standings.append(tied_teams[0])
-        div1 = standings[0].division
-        div_2_winner_index = -1
-        div_standings = []
-        div_standings.append(standings[0])
-        for i in range(1, len(standings)):
-            if standings[i].division is not div1:
-                div_2_winner_index = i
-                break
-        if div_2_winner_index is not 1:
-            # move div_2_ winner to index 1, move everyone else down.
-            div_standings.append(standings[div_2_winner_index])
-            for i in range(1, len(standings)):
-                if standings[i] not in div_standings:
-                    div_standings.append(standings[i])
-            return div_standings
-        else:
-            return standings
-        # for tm in standings:
-        #     print(tm.name, end=",")
-        # print()
-        # return standings
-
-class team:
-    "Class representing a fantasy football team"
+class League:
     name = ""
-    division = ""
-    average = 0.0
-    std_dev = 0.0
-    wins = 0
-    losses = 0
-    average_allowed = 0.0
+    num_teams = 0
+    num_playoff_teams = 0
+    tie_rule = ""
+    seed_tiebreaker = ""
+    num_regular_season_matchups = 0
+    divisions = {}  # key is divID and value is division name
+    teams = {}  # key is teamID and value is team name
 
-    def __init__(self, name, division, average, std_dev, wins, losses):
+    def __init__(self, name, num_teams, num_playoff_teams, tie_rule, seed_tiebreaker, num_regular_season_matchups,
+                 divisions=None, teams=None, results=None):
+        if divisions is None:
+            divisions = {}
+        if teams is None:
+            teams = {}
         self.name = name
-        self.division = division
-        self.average = average
-        self.std_dev = std_dev
+        self.num_teams = num_teams
+        self.num_playoff_teams = num_playoff_teams
+        self.tie_rule = tie_rule
+        self.seed_tiebreaker = seed_tiebreaker
+        self.num_regular_season_matchups = num_regular_season_matchups
+        self.divisions = divisions
+        self.teams = teams
+        self.results = results
+
+
+class Team:
+    def __init__(self, name, owner, id, div_id, points_for, points_against, wins, losses, schedule=None,
+                 points_by_week=None):
+        if schedule is None:
+            schedule = []
+        if points_by_week is None:
+            points_by_week = []
+        self.name = name
+        self.owner = owner
+        self.id = id
+        self.div_id = div_id
+        self.points_for = points_for
+        self.points_against = points_against
         self.wins = wins
         self.losses = losses
+        self.schedule = schedule
+        self.points_by_week = points_by_week
+        self.std_dev = self.calculate_std_dev()
 
     def __str__(self):
-        team_str = str(self.name) + "(" + str(self.wins) + "-" + str(self.losses) + ") " + str(self.average) + " PF/G"
-        record = str("(" + str(self.wins) + "-" + str(self.losses) + ")")
-        return str("%-32s %-7s %5.1f PF/G" % (self.name, record, self.average))
+        return self.name + ", " + self.owner + " (" + str(self.wins) + "-" + str(self.losses) + ")"
 
-lg = league()
-results_dict = {}
-for tm in lg.teams:
-    results_dict[tm.name] = [0 for i in range(len(lg.teams))]
-sims = 1
-for i in range(sims):
-    curr_teams = copy.deepcopy(lg.teams)
-    curr_schedule = copy.deepcopy(lg.schedule)
-    sim_lg = simulated_league(lg.divisions, curr_schedule, curr_teams)
-    # sim_lg.simulate()
-    standings = sim_lg.get_standings()
-    adjusted_standings = []
-    team_average = None
-    for k in range(len(standings)):
-        if standings[k].name != "Team Average":
-            adjusted_standings.append(standings[k])
-        else:
-            team_average = standings[k]
-    adjusted_standings.append(team_average)
-    # for j in range(len(standings)):
-    #     results_dict[standings[j].name][j] += 1
-    for j in range(len(adjusted_standings)):
-        results_dict[adjusted_standings[j].name][j] += 1
-        # print(j + 1, adjusted_standings[j].name, end=", ")
-    # print()
-csv_file = open("results.csv", "w")
-for tm, results in results_dict.items():
-    print(lg.get_team_by_name(tm))
-    csv_file.write(tm + ",")
-    for num in results:
-        csv_file.write(str(num / sims) + ",")
-    csv_file.write("\n")
-csv_file.close()
+    def calculate_std_dev(self):
+        if len(self.points_by_week) > 2:
+            return statistics.pstdev(self.points_by_week)
+
+    # def statistics_as_of_week(self, week):
+            # TODO: Allow for calculation of metrics by week
+
+
+def initialize(league_id, year):
+    league_data = espnff.League(league_id, year)
+    name = league_data.settings.name
+    num_teams = league_data.settings.team_count
+    num_playoff_teams = league_data.settings.playoff_team_count
+    tie_rule = league_data.settings.tie_rule
+    seed_tiebreaker = league_data.settings.playoff_seed_tie_rule
+    num_regular_season_matchups = league_data.settings.reg_season_count
+    divisions = {}  # key is divID and value is division name
+    team_names = {}  # key is teamID and value is team name
+    team_instances = {}  # key is teamId and value is Team obj
+
+    league_results = {}
+
+    for i in range(league_data.settings.reg_season_count):
+        scoreboard = league_data.scoreboard(i)
+        for matchup in scoreboard:
+            league_results['homeTeam'] = matchup.home_team
+            league_results['homeScore'] = matchup.home_score
+            league_results['awayTeam'] = matchup.away_team
+            league_results['awayScore'] = matchup.away_score
+
+    for tm in league_data.teams:
+        team_names[tm.team_id] = tm.team_name
+        divisions[tm.division_id] = tm.division_name
+        team_instances[tm.team_id] = Team(tm.team_name, tm.owner, tm.team_id, tm.division_id, tm.points_for,
+                                          tm.points_against, tm.wins, tm.losses, tm.schedule, tm.scores)
+
+    league_instance = League(name, num_teams, num_playoff_teams, tie_rule, seed_tiebreaker, num_regular_season_matchups,
+                             divisions, team_names, league_results)
+    return league_instance, team_instances
+
+
+league, teams = initialize(2253602, 2017)
+
+for key, val in teams.items():
+    print(val, val.points_for, val.std_dev)
