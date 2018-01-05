@@ -93,7 +93,7 @@ def get_schedule_data(schedule_data):
     :param schedule_data: raw response of schedule data from API
     :return: scheudle as a Pandas dataframe
     """
-    schedule_items = schedule_data.get("leagueSchedule", []).get('scheduleItems', [])
+    schedule_items = schedule_data.get("leagueSchedule", {}).get('scheduleItems', [])
     schedule_dict = {'week': [], 'home_id': [], 'home_score': [], 'away_id': [], 'away_score': [], 'outcome': [],
                      'probability': []}
     for matchup_data in schedule_items:
