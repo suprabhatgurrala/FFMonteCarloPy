@@ -1,11 +1,8 @@
+import copy
 import datetime
 import statistics
-from collections import OrderedDict
-from pprint import pprint
-
 import numpy
-import copy
-
+import pandas
 import scipy.stats
 
 import download
@@ -20,28 +17,32 @@ TIEBREAK_PF = 1
 TIEBREAK_DIV = 2
 TIEBREAK_PA = 3
 
-NUMBER_OF_SIMULATIONS = 1000
-CURRENT_YEAR = datetime.datetime.now().year
+NUMBER_OF_SIMULATIONS = 10
+
+CURRENT_SEASON = datetime.datetime.now().year
+if datetime.datetime.now().month < 8:
+    CURRENT_SEASON = CURRENT_SEASON - 1
+
 
 class League:
-    def __init__(self, league_id, year=CURRENT_YEAR, week=None):
-        league, teams, schedule_df = download.get_data(league_id, year)
+    def __init__(self, league_id, year=CURRENT_SEASON, week=None):
+        league_info, teams, schedule_df = download.get_data(league_id, year)
         if week is None:
-            self.week = league['current_period']
+            self.week = league_info['current_period']
         else:
             self.week = week
-        self.league_info = league
+        self.league_info = league_info
         self.team_info = teams
         self.schedule_df = schedule_df
-        self.schedule_as_of_week = self.init_schedule_as_of_week()
+        self.schedule_as_of_week = self.__init_schedule_as_of_week()
         self.team_stats = {}
         for tm_id, tm in teams.items():
             self.team_stats[tm_id] = {}
-        self.init_stats()
-        self.init_probabilities()
-        self.league_info['div_members'] = self.init_div_members()
+        self.calculate_stats()
+        self.__init_probabilities()
+        self.league_info['div_members'] = self.__init_div_members()
 
-    def init_div_members(self):
+    def __init_div_members(self):
         """
         Initialization method to be run in __init__()
         :return: a dict with division IDs as keys and the teams in that division as values
@@ -54,10 +55,10 @@ class League:
             div_members[tm.get('div_id')].append(tm_id)
         return div_members
 
-    def init_schedule_as_of_week(self):
+    def __init_schedule_as_of_week(self):
         return self.schedule_df[self.schedule_df.week < self.week]
 
-    def init_stats(self):
+    def calculate_stats(self):
         """
         Calculates teams' stats. Initialization method to be run in __init__().
         :return: does not return anything, modifies the team_stats dict
@@ -72,15 +73,17 @@ class League:
             self.team_stats[id]['ties'] = len(home_games[home_games.outcome == OUTCOME_TIE]) + len(
                 away_games[away_games.outcome == OUTCOME_TIE])
 
-            points_for_list = list(home_games.home_score) + list(away_games.away_score)
-            points_against_list = list(home_games.away_score) + list(away_games.home_score)
+            points_for_list = list(home_games[home_games.outcome != OUTCOME_TBD].home_score) + list(
+                away_games[away_games.outcome != OUTCOME_TBD].away_score)
+            points_against_list = list(home_games[home_games.outcome != OUTCOME_TBD].away_score) + list(
+                away_games[away_games.outcome != OUTCOME_TBD].home_score)
 
             self.team_stats[id]['average'] = statistics.mean(points_for_list)
             self.team_stats[id]['std_dev'] = statistics.pstdev(points_for_list) if self.week > 2 else None
             self.team_stats[id]['points_for'] = sum(points_for_list)
             self.team_stats[id]['points_against'] = sum(points_against_list)
 
-    def init_probabilities(self):
+    def __init_probabilities(self):
         """
         Calculates win probabilities for each matchup in the schedule. Initialization method to be run in __init__()
         """
@@ -96,7 +99,8 @@ class League:
             else:
                 self.schedule_df.loc[row_index, 'probability'] = 0
 
-        self.schedule_as_of_week = self.init_schedule_as_of_week()
+        # Calculates expected wins for each team as of week
+        self.schedule_as_of_week = self.__init_schedule_as_of_week()
         for tm_id, tm in self.team_stats.items():
             home_probs = self.schedule_as_of_week[self.schedule_as_of_week.home_id == tm_id]['probability']
             away_probs = self.schedule_as_of_week[self.schedule_as_of_week.away_id == tm_id]['probability']
@@ -105,20 +109,11 @@ class League:
                 expected_wins += 1 - away_prob
             tm['expected_wins'] = expected_wins
 
-    def calculate_standings(self):
+    def calculate_standings(self, team_stats=None):
         """
         Generates standings
         :return: a list of team IDs ordered by playoff seed (e.g. item at index 0 is #1 overall seed etc.)
         """
-
-        # Group teams by record
-        # wins_dict = {}
-        # for tm_id, tm in self.team_stats.items():
-        #     if wins_dict.get(tm['wins']) is not None:
-        #         wins_dict[tm['wins']].append(tm_id)
-        #     else:
-        #         wins_dict[tm['wins']] = [tm_id]
-        # wins_dict_ordered = OrderedDict(sorted(wins_dict.items(), reverse=True))
         record_dict = {}
         for tm_id, tm in self.team_stats.items():
             record = tm['wins'], tm['losses'], tm['ties']
@@ -133,7 +128,7 @@ class League:
             tied_team_ids = record_dict.get(record)
             ordered = []
             while len(tied_team_ids) > 1:
-                tie_winner = self.tiebreak(tied_team_ids)
+                tie_winner = self.__tiebreak(tied_team_ids)
                 ordered.append(tie_winner)
                 tied_team_ids.remove(tie_winner)
             ordered.append(tied_team_ids[0])
@@ -156,7 +151,7 @@ class League:
                 break
         return div_winners + standings
 
-    def tiebreak(self, tied_teams):
+    def __tiebreak(self, tied_teams):
         """
         :param tied_teams: team_ids of the teams with tied records
         :return: the team id of the team that wins the tiebreak
@@ -167,11 +162,11 @@ class League:
         tied_teams_copy = copy.deepcopy(tied_teams)
 
         if tiebreak_method == TIEBREAK_H2H:
-            tie_winner = self.tiebreak_h2h(tied_teams_copy)
+            tie_winner = self.__tiebreak_h2h(tied_teams_copy)
         elif tiebreak_method == TIEBREAK_DIV:
-            tie_winner = self.tiebreak_div(tied_teams_copy)
+            tie_winner = self.__tiebreak_div(tied_teams_copy)
         elif tiebreak_method == TIEBREAK_PA:
-            tie_winner = self.tiebreak_pa(tied_teams_copy)
+            tie_winner = self.__tiebreak_pa(tied_teams_copy)
         else:
             # If none of the other tiebreakers were applicable, use total points for as tiebreaker
             tied_teams_copy.sort(key=self.__get_pf, reverse=True)
@@ -239,7 +234,7 @@ class League:
 
         return wins * 1.0 / games_played
 
-    def tiebreak_h2h(self, tied_teams):
+    def __tiebreak_h2h(self, tied_teams):
         # calculate H2H records for all teams involved in tie
         # H2H only applies if all teams have same number of games played against each other
         # Total points for is secondary tiebreaker
@@ -277,11 +272,11 @@ class League:
             h2h_ordered.sort(key=lambda val: val['wins'], reverse=True)
         return h2h_ordered[0]['team_id']
 
-    def tiebreak_pa(self, tied_teams):
+    def __tiebreak_pa(self, tied_teams):
         # H2H record is secondary tiebreaker
         ordered = []
         while len(tied_teams) > 1:
-            tie_winner = self.tiebreak_h2h(tied_teams)
+            tie_winner = self.__tiebreak_h2h(tied_teams)
             ordered.append(tie_winner)
             tied_teams.remove(tie_winner)
         ordered.append(tied_teams[0])
@@ -291,11 +286,11 @@ class League:
 
         return ordered[0]
 
-    def tiebreak_div(self, tied_teams):
+    def __tiebreak_div(self, tied_teams):
         # H2H record is secondary tiebreaker
         ordered = []
         while len(tied_teams) > 1:
-            tie_winner = self.tiebreak_h2h(tied_teams)
+            tie_winner = self.__tiebreak_h2h(tied_teams)
             ordered.append(tie_winner)
             tied_teams.remove(tie_winner)
         ordered.append(tied_teams[0])
@@ -306,5 +301,89 @@ class League:
         return ordered[0]
 
 
-league = League(2253602, week=12)
-print(league.calculate_standings())
+class Simulator():
+    def __init__(self, league_id, year=CURRENT_SEASON, week=None):
+        self.league = League(league_id, year, week)
+        self.simulated_league = copy.deepcopy(self.league)
+
+    def calculate_odds(self):
+        # Runs simulations and calculates playoff odds for all teams
+        if self.simulated_league.week > 2:
+            reg_season_length = self.simulated_league.league_info.get('num_regular_season_matchups')
+            reg_season_schedule = self.simulated_league.schedule_df[self.simulated_league.schedule_df.week <= reg_season_length]
+
+            simulated_standings = []
+            for _ in range(NUMBER_OF_SIMULATIONS):
+                # print("Simulating",_,"of",NUMBER_OF_SIMULATIONS)
+                simulated_schedule = copy.deepcopy(reg_season_schedule)
+                simulated_stats = copy.deepcopy(self.simulated_league.team_stats)
+                self.simulated_league.schedule_as_of_week = simulated_schedule
+                self.simulated_league.team_stats = simulated_stats
+                for row_number, row in simulated_schedule[simulated_schedule.week >= self.simulated_league.week].iterrows():
+                    # print("Simulating game between", row.home_id, "and", row.away_id)
+                    home_avg = simulated_stats.get(row.home_id).get('average')
+                    home_std_dev = simulated_stats.get(row.home_id).get('std_dev')
+
+                    sim_home_score = numpy.random.normal(loc=home_avg, scale=home_std_dev)
+                    simulated_schedule.loc[row_number, 'home_score'] = sim_home_score
+
+                    away_avg = simulated_stats.get(row.away_id).get('average')
+                    away_std_dev = simulated_stats.get(row.away_id).get('std_dev')
+
+                    sim_away_score = numpy.random.normal(loc=away_avg, scale=away_std_dev)
+                    simulated_schedule.loc[row_number, 'away_score'] = sim_away_score
+
+                    if sim_home_score > sim_away_score:
+                        outcome = OUTCOME_HOME_WIN
+                    elif sim_away_score > sim_home_score:
+                        outcome = OUTCOME_AWAY_WIN
+                    else:
+                        outcome = OUTCOME_TIE
+                    simulated_schedule.loc[row_number, 'outcome'] = outcome
+                    self.simulated_league.calculate_stats()
+                simulated_standings.append(self.simulated_league.calculate_standings())
+
+            teams = self.league.team_info.keys()
+            seeds = range(1, self.league.league_info.get('num_teams') + 1)
+            results_df = pandas.DataFrame(0, index=teams, columns=seeds)
+            for standings in simulated_standings:
+                for i in range(len(standings)):
+                    results_df.loc[standings[i], i + 1] += 1.0
+            return results_df / NUMBER_OF_SIMULATIONS
+
+        else:
+            # Not enough data to run simulations
+            return None
+
+    def output_results(self):
+        """
+        Outputs simulation results with team metadata included
+        :return:
+        """
+        output = {'league_info': self.league.league_info}
+        team_data = {}
+        odds_df = self.calculate_odds()
+        for tm_id in self.league.team_info.keys():
+            team_data[tm_id] = {}
+            for key, value in self.league.team_info.get(tm_id).items():
+                team_data[tm_id][key] = value
+            for key, value in self.league.team_stats.get(tm_id).items():
+                team_data[tm_id][key] = value
+            team_data[tm_id]["odds"] = odds_df.loc[tm_id].to_dict()
+        output['team_data'] = team_data
+
+        return output
+
+def simulate(league_id, year=CURRENT_SEASON, week=None):
+    """
+    Main method to run simulations
+    :param league_id: league id to simulate
+    :param year: optional specify the year to simulate
+    :param week: optional specify which week to simulate for
+    :return: a dict containing data about the league, each team, and their odds
+    """
+    sim = Simulator(league_id, year, week)
+    return sim.output_results()
+
+# Example execution:
+# print(simulate(565232, week=13))
