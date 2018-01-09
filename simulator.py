@@ -5,7 +5,7 @@ import numpy
 import pandas
 import scipy.stats
 
-import download
+from . import download
 
 OUTCOME_TBD = 0
 OUTCOME_HOME_WIN = 1
