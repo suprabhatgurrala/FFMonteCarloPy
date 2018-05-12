@@ -10,4 +10,5 @@ def extract_leagueId(url):
 	except (ValueError, KeyError) as e:
 		error = 'Invalid URL'
 		return (False, error)
+		
 	return (True, leagueId)
