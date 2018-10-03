@@ -1,17 +1,6 @@
 import urllib.parse as urlparse
 import re
-
-class IDError(Exception):
-    def __init__(self,*args,**kwargs):
-        Exception.__init__(self,*args,**kwargs)
-    def __str__(self):
-    	return 'ID Error: ' + super().__str__()
-
-class URLError(Exception):
-    def __init__(self,*args,**kwargs):
-        Exception.__init__(self,*args,**kwargs)
-    def __str__(self):
-    	return 'URL Error: ' + super().__str__()
+from .exceptions import IDError, URLError
 
 def extract_leagueId(input_string):
 	parsed = urlparse.urlparse(input_string)
