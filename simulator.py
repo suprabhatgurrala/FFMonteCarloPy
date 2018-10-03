@@ -5,7 +5,8 @@ import numpy
 import pandas
 import scipy.stats
 
-from . import download
+import download
+from exceptions import SimulatorError
 
 OUTCOME_TBD = 0
 OUTCOME_HOME_WIN = 1
@@ -17,7 +18,7 @@ TIEBREAK_PF = 1
 TIEBREAK_DIV = 2
 TIEBREAK_PA = 3
 
-NUMBER_OF_SIMULATIONS = 10
+NUMBER_OF_SIMULATIONS = 100
 
 CURRENT_SEASON = datetime.datetime.now().year
 if datetime.datetime.now().month < 8:
@@ -27,8 +28,11 @@ if datetime.datetime.now().month < 8:
 class League:
     def __init__(self, league_id, year=CURRENT_SEASON, week=None):
         league_info, teams, schedule_df = download.get_data(league_id, year)
-        if week is None:
+        if week is not None and week > int(league_info['num_regular_season_matchups']):
+            raise SimulatorError("Invalid week error")
+        if week is None or week > league_info['current_period']:
             self.week = league_info['current_period']
+
         else:
             self.week = week
         self.league_info = league_info
@@ -353,7 +357,7 @@ class Simulator():
 
         else:
             # Not enough data to run simulations
-            return None
+            raise SimulatorError("Not enough data, try again after more games have been played.")
 
     def output_results(self):
         """
@@ -382,8 +386,12 @@ def simulate(league_id, year=CURRENT_SEASON, week=None):
     :param week: optional specify which week to simulate for
     :return: a dict containing data about the league, each team, and their odds
     """
+    if year > CURRENT_SEASON:
+        raise SimulatorError("Invalid year entered.")
+
     sim = Simulator(league_id, year, week)
     return sim.output_results()
 
+
 # Example execution:
-# print(simulate(565232, week=13))
+# pprint(simulate(565232))
