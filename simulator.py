@@ -5,8 +5,8 @@ import numpy
 import pandas
 import scipy.stats
 
-import download
-from exceptions import SimulatorError
+from . import download
+from .exceptions import SimulatorError
 
 OUTCOME_TBD = 0
 OUTCOME_HOME_WIN = 1
