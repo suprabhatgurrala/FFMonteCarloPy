@@ -1,6 +1,11 @@
 import copy
+import csv
+import threading
+import time
 import datetime
 import statistics
+from pprint import pprint
+
 import numpy
 import pandas
 import scipy.stats
@@ -18,7 +23,7 @@ TIEBREAK_PF = 1
 TIEBREAK_DIV = 2
 TIEBREAK_PA = 3
 
-NUMBER_OF_SIMULATIONS = 100
+NUMBER_OF_SIMULATIONS = 1000
 
 CURRENT_SEASON = datetime.datetime.now().year
 if datetime.datetime.now().month < 8:
@@ -82,10 +87,12 @@ class League:
             points_against_list = list(home_games[home_games.outcome != OUTCOME_TBD].away_score) + list(
                 away_games[away_games.outcome != OUTCOME_TBD].home_score)
 
-            self.team_stats[id]['average'] = statistics.mean(points_for_list)
-            self.team_stats[id]['std_dev'] = statistics.pstdev(points_for_list) if self.week > 2 else None
+            self.team_stats[id]['average'] = numpy.mean(points_for_list)
+            self.team_stats[id]['std_dev'] = numpy.std(points_for_list) if self.week > 2 else None
             self.team_stats[id]['points_for'] = sum(points_for_list)
             self.team_stats[id]['points_against'] = sum(points_against_list)
+            self.team_stats[id]['pf_list'] = points_for_list
+            self.team_stats[id]['pa_list'] = points_against_list
 
     def __init_probabilities(self):
         """
@@ -308,44 +315,74 @@ class League:
 class Simulator():
     def __init__(self, league_id, year=CURRENT_SEASON, week=None):
         self.league = League(league_id, year, week)
-        self.simulated_league = copy.deepcopy(self.league)
+        # self.simulated_league = copy.deepcopy(self.league)
+        self.lock = threading.Lock()
+
+    def simulate_instance(self, reg_season_schedule, simulated_standings, i):
+        # print("Simulating", i, "of", NUMBER_OF_SIMULATIONS)
+        # simulated_schedule = copy.deepcopy(reg_season_schedule)
+        simulated_schedule = reg_season_schedule.copy(deep=True)
+        simulated_league = copy.deepcopy(self.league)
+        simulated_stats = simulated_league.team_stats
+        simulated_league.schedule_as_of_week = simulated_schedule
+        # simulated_league.team_stats = simulated_stats
+        for row_number, row in simulated_schedule[simulated_schedule.week >= simulated_league.week].iterrows():
+            # print("Simulating game between", row.home_id, "and", row.away_id)
+            home_avg = simulated_stats.get(row.home_id).get('average')
+            home_std_dev = simulated_stats.get(row.home_id).get('std_dev')
+
+            sim_home_score = numpy.random.normal(loc=home_avg, scale=home_std_dev)
+            simulated_schedule.loc[row_number, 'home_score'] = sim_home_score
+
+            away_avg = simulated_stats.get(row.away_id).get('average')
+            away_std_dev = simulated_stats.get(row.away_id).get('std_dev')
+
+            sim_away_score = numpy.random.normal(loc=away_avg, scale=away_std_dev)
+            simulated_schedule.loc[row_number, 'away_score'] = sim_away_score
+
+            hm_pf_list = simulated_league.team_stats[row.home_id]['pf_list']
+            hm_pf_list.append(sim_home_score)
+
+            aw_pf_list = simulated_league.team_stats[row.away_id]['pf_list']
+            aw_pf_list.append(sim_home_score)
+
+            simulated_league.team_stats[row.home_id]['average'] = numpy.mean(hm_pf_list)
+            simulated_league.team_stats[row.home_id]['std_dev'] = numpy.std(hm_pf_list) \
+                if len(hm_pf_list) > 2 else None
+
+            simulated_league.team_stats[row.away_id]['average'] = numpy.mean(hm_pf_list)
+            simulated_league.team_stats[row.away_id]['std_dev'] = numpy.std(hm_pf_list) \
+                if len(hm_pf_list) > 2 else None
+
+            if sim_home_score > sim_away_score:
+                outcome = OUTCOME_HOME_WIN
+            elif sim_away_score > sim_home_score:
+                outcome = OUTCOME_AWAY_WIN
+            else:
+                outcome = OUTCOME_TIE
+            simulated_schedule.loc[row_number, 'outcome'] = outcome
+        simulated_league.calculate_stats()
+        simulated_standings[i] = simulated_league.calculate_standings()
+
+    def simulate_game(self, ):
+        pass
 
     def calculate_odds(self):
         # Runs simulations and calculates playoff odds for all teams
-        if self.simulated_league.week > 2:
-            reg_season_length = self.simulated_league.league_info.get('num_regular_season_matchups')
-            reg_season_schedule = self.simulated_league.schedule_df[self.simulated_league.schedule_df.week <= reg_season_length]
+        if self.league.week > 2:
+            reg_season_length = self.league.league_info.get('num_regular_season_matchups')
+            reg_season_schedule = self.league.schedule_df[self.league.schedule_df.week <= reg_season_length]
 
-            simulated_standings = []
-            for _ in range(NUMBER_OF_SIMULATIONS):
-                # print("Simulating",_,"of",NUMBER_OF_SIMULATIONS)
-                simulated_schedule = copy.deepcopy(reg_season_schedule)
-                simulated_stats = copy.deepcopy(self.simulated_league.team_stats)
-                self.simulated_league.schedule_as_of_week = simulated_schedule
-                self.simulated_league.team_stats = simulated_stats
-                for row_number, row in simulated_schedule[simulated_schedule.week >= self.simulated_league.week].iterrows():
-                    # print("Simulating game between", row.home_id, "and", row.away_id)
-                    home_avg = simulated_stats.get(row.home_id).get('average')
-                    home_std_dev = simulated_stats.get(row.home_id).get('std_dev')
+            simulated_standings = [None] * NUMBER_OF_SIMULATIONS
+            threads = []
+            for i in range(NUMBER_OF_SIMULATIONS):
+                t = threading.Thread(target=self.simulate_instance, args=(reg_season_schedule, simulated_standings, i))
+                threads.append(t)
+                t.start()
+                # self.simulate_instance(reg_season_schedule, simulated_standings, i)
 
-                    sim_home_score = numpy.random.normal(loc=home_avg, scale=home_std_dev)
-                    simulated_schedule.loc[row_number, 'home_score'] = sim_home_score
-
-                    away_avg = simulated_stats.get(row.away_id).get('average')
-                    away_std_dev = simulated_stats.get(row.away_id).get('std_dev')
-
-                    sim_away_score = numpy.random.normal(loc=away_avg, scale=away_std_dev)
-                    simulated_schedule.loc[row_number, 'away_score'] = sim_away_score
-
-                    if sim_home_score > sim_away_score:
-                        outcome = OUTCOME_HOME_WIN
-                    elif sim_away_score > sim_home_score:
-                        outcome = OUTCOME_AWAY_WIN
-                    else:
-                        outcome = OUTCOME_TIE
-                    simulated_schedule.loc[row_number, 'outcome'] = outcome
-                    self.simulated_league.calculate_stats()
-                simulated_standings.append(self.simulated_league.calculate_standings())
+            for t in threads:
+                t.join()
 
             teams = self.league.team_info.keys()
             seeds = range(1, self.league.league_info.get('num_teams') + 1)
@@ -367,13 +404,27 @@ class Simulator():
         output = {'league_info': self.league.league_info}
         team_data = {}
         odds_df = self.calculate_odds()
-        for tm_id in self.league.team_info.keys():
-            team_data[tm_id] = {}
-            for key, value in self.league.team_info.get(tm_id).items():
-                team_data[tm_id][key] = value
-            for key, value in self.league.team_stats.get(tm_id).items():
-                team_data[tm_id][key] = value
-            team_data[tm_id]["odds"] = odds_df.loc[tm_id].to_dict()
+
+        with open('results.csv', 'w', newline='') as csvfile:
+            file_writer = csv.writer(csvfile)
+            for tm_id in self.league.team_info.keys():
+                team_data[tm_id] = {}
+                for key, value in self.league.team_info.get(tm_id).items():
+                    team_data[tm_id][key] = value
+                for key, value in self.league.team_stats.get(tm_id).items():
+                    team_data[tm_id][key] = value
+                team_data[tm_id]["odds"] = odds_df.loc[tm_id].to_dict()
+
+                line = [team_data[tm_id].get('name'),
+                        team_data[tm_id].get('owner'),
+                        team_data[tm_id].get('wins'),
+                        team_data[tm_id].get('losses'),
+                        team_data[tm_id].get('average'),
+                        team_data[tm_id].get('std_dev'),
+                        team_data[tm_id].get('expected_wins')]
+                for key, value in team_data[tm_id].get('odds').items():
+                    line.append(value)
+                file_writer.writerow(line)
         output['team_data'] = team_data
 
         return output
@@ -394,4 +445,6 @@ def simulate(league_id, year=CURRENT_SEASON, week=None):
 
 
 # Example execution:
-# pprint(simulate(565232))
+start_time = time.time()
+pprint(simulate(565232))
+print("Simulation took ", time.time() - start_time)
