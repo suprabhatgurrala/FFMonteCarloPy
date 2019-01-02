@@ -25,7 +25,10 @@ def extract_leagueId(input_string):
 		if(bool(re.search(r'\D', input_string))):
 			raise IDError("Input contains non-numbers")
 		else:
-			leagueId = int(input_string)
+			try:
+				leagueId = int(input_string); #throws ValueError
+			except ValueError as e:
+				raise URLError("League ID is invalid")
 			return leagueId
 
 	raise IDError("No League ID could be found")
